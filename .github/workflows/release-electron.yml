@@ -1,0 +1,132 @@
+name: PHL — Release (Electron / Decrediton)
+
+on:
+  push:
+    tags:
+      - 'phl/v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g. v1.0.0)'
+        required: true
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - name: Install dependencies
+        run: npm ci
+      - name: Build Linux
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run package -- --linux AppImage deb
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-builds
+          path: release/**/*.{AppImage,deb,sha256}
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - name: Install dependencies
+        run: npm ci
+      - name: Build Windows
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run package -- --win nsis portable
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-builds
+          path: release/**/*.{exe,sha256}
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - name: Install dependencies
+        run: npm ci
+      - name: Build macOS (x64 + arm64)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          npm run package -- --mac dmg --x64
+          npm run package -- --mac dmg --arm64
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-builds
+          path: release/**/*.{dmg,sha256}
+
+  release:
+    needs: [build-linux, build-windows, build-macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/
+          merge-multiple: true
+
+      - name: Get version
+        id: meta
+        run: |
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#phl/}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Generate release notes
+        run: |
+          cat > release_notes.md << 'EOF'
+          ## PHL Decrediton ${{ steps.meta.outputs.version }}
+
+          Maintained fork of [`decred/decrediton`](https://github.com/decred/decrediton) by [PHL Technologies](https://github.com/phltechnologies).
+
+          Cross-platform GUI wallet for Decred — Windows, macOS, and Linux.
+
+          ### Downloads
+          | Platform | File |
+          |----------|------|
+          | Windows | `.exe` installer |
+          | macOS Intel | `x64.dmg` |
+          | macOS Apple Silicon | `arm64.dmg` |
+          | Linux | `.AppImage` or `.deb` |
+
+          Verify your download with the `.sha256` checksum file.
+
+          ### Changes
+          - PHL maintenance pipeline updates applied
+          - Upstream sync from decred/decrediton
+          - All changes reviewed by a PHL maintainer before release
+
+          _Released by PHL Technologies — github.com/phltechnologies_
+          EOF
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: "PHL Decrediton ${{ steps.meta.outputs.version }}"
+          body_path: release_notes.md
+          files: dist/**
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
